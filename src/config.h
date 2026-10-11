@@ -147,7 +147,9 @@ namespace Config {
     const u16 FAN_SPINUP_DURATION = 2000;       // ms of 100% duty on boot and every time the fan is turned back on.
                                                 // Small fans often do not spin up to a low duty cycle from a standstill,
                                                 // which looks exactly like "the fan never reaches full speed".
-    const bool FAN_TACHOMETER_ENABLED = false;  // true = measure real RPM from the fan's tach wire (see README for wiring)
+    const bool FAN_TACHOMETER_ENABLED = true;   // true = measure real RPM from the fan's tach wire.
+                                                // Requires the yellow sense wire on Config::Pins::FAN_TACH
+                                                // through a voltage divider - see README. Reads 0 while unwired.
     const u8 FAN_PULSES_PER_REVOLUTION = 2;     // 4-wire fans output 2 pulses per revolution
     const u16 FAN_RPM_UPDATE_INTERVAL = 500;    // ms between RPM measurements
     const u16 FAN_RPM_RATED = 6000;             // RPM your fan is rated for, only used for the HUD readout/logging
