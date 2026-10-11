@@ -1,0 +1,8 @@
+#include "Controllers/Controller.h"
+#include "Controllers/Controller_Startup.h"
+#include "Controllers/Controller_Settings.h"
+#include "Controllers/Controller_FaceSwitcher.h"
+#include "Controllers/Controller_SnakeGame.h"
+#include "Controllers/Controller_AutomaticFaceSwitcher.h"
+#include "Controllers/Controller_SpectrumAnalyzer.h"
+#include "Controllers/Controller_Strobe.h"
