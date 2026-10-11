@@ -70,18 +70,52 @@ void setup() {
     // matching/mirrored art - an expression that puts different art on each side (like
     // a one-sided tongue) will show a piece of that mismatch here. Fix that at the
     // source (make MOUTH_L/MOUTH_R match for that expression) rather than here.
+    //
+    // Which blocks get copied matters a lot:
+    //   The chain runs (from the ESP32) EYE_L - MOUTH_L - NOSE_L - MOUTH_FRONT -
+    //   NOSE_R - MOUTH_R - EYE_R, and image x runs backwards along the chain, so
+    //     MOUTH_R block 3 (image columns 24..31) is the end that touches NOSE_R
+    //     MOUTH_L block 0 (image columns  0.. 7) is the end that touches NOSE_L
+    //     MOUTH_FRONT block 0 (image columns 0..7) touches NOSE_R, block 1 touches NOSE_L
+    //   Copying anything else (the previous version used the cheek side blocks) grabs
+    //   the columns that the talking animation barely moves, which makes the two front
+    //   matrices look frozen while speaking. It also has to be mirrored into the panel:
+    //   the buffer stores one row of a module per byte (see Util.cpp pointToMatrix), so
+    //   `mirrorInt` mirrors a block horizontally and the byte index is the image row.
+    //   Flip the Config::Displays::MOUTH_FRONT_* switches in config.h if your head is
+    //   wired or mounted differently.
     displayManager->addGlobalEffect(new LambdaEffect(MOUTH_FRONT, [](u8* buffer, Display* display) {
         Display* mouthL = displayManager->getDisplayByBitmask(MOUTH_L);
         Display* mouthR = displayManager->getDisplayByBitmask(MOUTH_R);
         if (!mouthL || !mouthR) return;
-        // buffer[0..7]  borders MOUTH_R -> take MOUTH_R's front-facing 8 columns
+
+        const u8 sourceL = Config::Displays::MOUTH_FRONT_SOURCE_BLOCK_L * 8;
+        const u8 sourceR = Config::Displays::MOUTH_FRONT_SOURCE_BLOCK_R * 8;
+
         for (u8 k = 0; k < 8; k++) {
-            buffer[k] = mouthR->matrixBuffer[k];
+            // byte index inside the block = image row, so this keeps rows where they are
+            u8 row = Config::Displays::MOUTH_FRONT_FLIP_VERTICAL ? 7 - k : k;
+
+            u8 right = mouthR->matrixBuffer[sourceR + row];   // half bordering NOSE_R
+            u8 left  = mouthL->matrixBuffer[sourceL + row];   // half bordering NOSE_L
+
+            if (Config::Displays::MOUTH_FRONT_MIRROR_BLOCKS) {
+                right = mirrorInt(right);
+                left  = mirrorInt(left);
+            }
+
+            if (Config::Displays::MOUTH_FRONT_SWAP_HALVES) {
+                buffer[k] = left;
+                buffer[8 + k] = right;
+            } else {
+                buffer[k] = right;
+                buffer[8 + k] = left;
+            }
         }
-        // buffer[8..15] borders MOUTH_L -> take MOUTH_L's front-facing 8 columns
-        for (u8 k = 0; k < 8; k++) {
-            buffer[15 - k] = mouthL->matrixBuffer[31 - k];
-        }
+
+        // Global effects only run on the matrix buffer, so the preview on the HUD would
+        // stay empty for this panel - keep it in sync by hand.
+        memcpy(display->hudBuffer, buffer, display->getSize());
     }));
 
     // initialize led strip
@@ -207,6 +241,7 @@ void loop(){
     ledStrip->update();
     uptimeCounter->update();
     animatedMouth->update();
+    fanControl->update();
     displayManager->update();
     handleSerialCommand();
 }
@@ -385,15 +420,20 @@ void createSettingsMenu() {
             [](u8 value) { sequencePlayer->setRareTransitionChance(value); }
         ),
 
+        // 255 == full duty cycle == the fan's rated speed. Steps of 17 give ~7% increments.
         new Setting_Lambda(
             "Fan speed",
             "",
             SETTING_FAN_PWM_SPEED,
             SETTING_TYPE_PERCENTAGE,
-            255, 0, 255, 51,
+            255, 0, 255, 17,
             []() -> u8 { return fanControl->getSpeed(); }, 
             [](u8 value) { fanControl->setSpeed(value); }
         ),
+
+        // instantly jump to 100% (and back to 0), bypassing the menu stepping
+        new Setting_Action("Fan speed", "Full", [](u8 value) { fanControl->setSpeed(255); }),
+        new Setting_Action("Fan speed", "Off", [](u8 value) { fanControl->setSpeed(0); }),
 
         new Setting_Action(
             "Misc.",
@@ -456,6 +496,34 @@ bool executeCommand(String cmd) {
     cmd.toLowerCase();
     if(cmd.length() == 0) return false;
 
+    // fan speed control / readout: "fan" prints the state, "fan 0".."fan 100" sets it
+    if(cmd.startsWith("fan")) {
+        String arg = cmd.substring(3);
+        arg.trim();
+        if(arg.length() == 0) {
+            Serial.printf(
+                "Fan: %d%% (setting %d/255), duty range %d%% - %d%%, spin up: %s, %d Hz\n",
+                fanControl->getSpeedPercent(), fanControl->getSpeed(),
+                (u16)(Config::FAN_MIN_DUTY * 100.0f), (u16)(Config::FAN_MAX_DUTY * 100.0f),
+                fanControl->isSpinningUp() ? "yes" : "no", Config::FAN_PWM_FREQUENCY
+            );
+            if(fanControl->hasTachometer()) {
+                Serial.printf("Fan RPM: %d (rated %d, %d%% of rated)\n",
+                    fanControl->getRPM(), Config::FAN_RPM_RATED,
+                    (u16)(((u32)fanControl->getRPM() * 100) / Config::FAN_RPM_RATED));
+            } else {
+                Serial.println("Fan RPM: unknown (tachometer disabled, see Config::FAN_TACHOMETER_ENABLED)");
+            }
+            return true;
+        }
+        i32 value = arg.toInt();
+        if(value < 0) value = 0;
+        if(value > 100) value = 100;
+        fanControl->setSpeed((u8)((value * 255) / 100));
+        Serial.printf("Fan speed set to %d%% (%d/255)\n", (i32)value, (i32)fanControl->getSpeed());
+        return true;
+    }
+
     if(cmd == "redraw")     { displayManager->forceFinalize(); return true; }
     if(cmd == "boop")       { boopSensor->calibrate(); return true; }
     if(cmd == "settings")   { changeController(new Controller_Settings(displayManager, settingsManager)); return true; }
@@ -506,6 +574,7 @@ void handleSerialCommand() {
         TOASTER_LOG("Faces: ");
         for(const FaceCommand& f : faces) TOASTER_LOG("%s ", f.name);
         TOASTER_LOG("\nOther commands: settings, redraw, boop, mouthcal, snake, autoswitch, normal, save, restart\n");
+        TOASTER_LOG("Fan: \"fan\" prints speed/RPM, \"fan 80\" sets 80%%\n");
         return;
     }
 

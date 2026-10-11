@@ -137,7 +137,7 @@ class Controller_SpectrumAnalyzer : public Controller {
                 peakValues[i] = barValues[i];
             } else {
                 peakGravity[i] += peakGravity[i] <= MAXPEAKGRAVITY ? 0.01 : 0;
-                peakValues[i] = peakValues <= 0 ? 0 : peakValues[i] - peakGravity[i];
+                peakValues[i] = peakValues[i] <= 0 ? 0 : peakValues[i] - peakGravity[i];
             }
         }
 

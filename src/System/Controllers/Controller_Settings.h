@@ -8,6 +8,12 @@
 #include "System/Settings/SettingsManager.h"
 #include "Controller.h"
 
+// fanControl is created in main.cpp. PWMFan.h is included here directly (it has no
+// dependencies on the rest of the system) because System/Peripherals.h is only
+// included further down the chain.
+#include "System/Peripherals/PWMFan.h"
+extern PWMFan* fanControl;
+
 /**
  * Settings controller
  *
@@ -141,6 +147,12 @@ class Controller_Settings : public Controller {
             drawStatusScreenItem("Uptime %18s", uptime);
             drawStatusScreenItem("Boops %19d", boopCount);
             drawStatusScreenItem("FPS %21d", (1000000 / deltaTime));
+            // fan state, RPM is only shown when the tachometer is enabled in config.h
+            if(fanControl->hasTachometer()) {
+                drawStatusScreenItem("Fan %3d%% %5drpm", fanControl->getSpeedPercent(), fanControl->getRPM());
+            } else {
+                drawStatusScreenItem("Fan %13d%%", fanControl->getSpeedPercent());
+            }
         } else if (settingCursor == 254) { 
             beginStatusScreenDraw();
             drawStatusScreenItem("Frame %19d", frameCount);

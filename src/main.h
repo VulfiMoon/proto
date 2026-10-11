@@ -14,6 +14,7 @@ extern SequencePlayer* sequencePlayer;
 extern DisplayManager* displayManager;
 extern EyeBlink* eyeBlink;
 extern InputHandler inputHandler;
+extern PWMFan* fanControl;
 
 void changeController(Controller* newController);
 void loopAsync(void* pvParameters);
