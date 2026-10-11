@@ -28,7 +28,7 @@ The following hardware is supported, with more to come in the future:
 - TCRT5000 Infrared obstacle avoidance sensor (Boop sensor, analog and digital)
 - WS2812 LED strip or something similar supported by the FastLED library (LED strips on left and right sides)
 - MAX9814 Electret microphone module (For animated mouth)
-- Any 5V PWM controlled fan (Noctua NF-A4x20 5V PWM) (A fan is a must for proper airflow)
+- Any 5V PWM controlled 4-wire fan (Noctua NF-A4x20 5V PWM) (A fan is a must for proper airflow). The 4th wire (tach) is optional and lets the firmware show the real RPM
 
 A minimum viable setup requires a dev board, bluetooth gamepad and SSD1306 heads up display. Alternatively you can test using the wokwi simulator.<br>
 Most if not all hardware can be purchased on sites like aliexpress or ebay. <br><br>
@@ -36,7 +36,7 @@ Most if not all hardware can be purchased on sites like aliexpress or ebay. <br>
 ## Wiring
 
 ### MAX7219 LED Dot matrix
-MAX7219 can be daisy chained. Wire up displays in this order:<br>
+MAX7219 can be daisy chained. Wire up displays in this order (standard head):<br>
 
 - ESP32
 1. Eye Left (16x8)
@@ -45,6 +45,39 @@ MAX7219 can be daisy chained. Wire up displays in this order:<br>
 4. Nose Right (8x8)
 5. Mouth Right (32x8)
 6. Eye Right (16x8)
+
+**Heads with an extra front mouth panel** (the two matrices that sit between the noses
+at the very front of the muzzle) use this order instead - this is what `config.h` is set
+up for, 16 modules in total:
+
+- ESP32
+1. Eye Left (16x8)
+2. Mouth Left (32x8)
+3. Nose Left (8x8)
+4. Mouth Front (16x8)
+5. Nose Right (8x8)
+6. Mouth Right (32x8)
+7. Eye Right (16x8)
+
+The front panel has no artwork of its own: every frame it is stitched together from the
+8 columns of Mouth Right and Mouth Left that physically border it (through the noses),
+so the mouth reads as one line running around the front of the muzzle - including while
+talking. If your head is wired differently, or the front panel shows the wrong end of the
+mouth (or a mirrored / upside down picture), all of that is adjustable with the
+`MOUTH_FRONT_*` switches in [config.h](src/config.h):
+
+| Switch | Meaning |
+| - | - |
+| `MOUTH_FRONT_SOURCE_BLOCK_R` / `..._L` | which 8x8 block (0-3) of the side mouth borders the nose: `3` for the right mouth, `0` for the left mouth with the wiring above |
+| `MOUTH_FRONT_MIRROR_BLOCKS` | mirror the copied block into the panel so the line flows into the middle instead of repeating |
+| `MOUTH_FRONT_SWAP_HALVES` | swap the left and right half of the panel |
+| `MOUTH_FRONT_FLIP_VERTICAL` | flip the copied art upside down (front modules mounted rotated) |
+
+`tools/mouth_front_check.cpp` renders the stitching as ASCII art on your PC, which makes
+it a lot easier to figure out the correct combination without uploading every time:
+```
+g++ -std=c++17 tools/mouth_front_check.cpp -o mouthcheck && ./mouthcheck
+```
 
 <br>
 
@@ -93,8 +126,38 @@ Connect GAIN to VDD for a 40dB gain<br>
 | Fan header | ESP32 |
 | - | - |
 | PWM (Blue) | 16 |
+| Tach / sense (Yellow, optional) | 17 (through a voltage divider, see below) |
 
 Use an **external** 5V power supply<br><br>
+
+The fan settings live in the `Fan` block of [config.h](src/config.h):
+
+| Setting | Meaning |
+| - | - |
+| `FAN_PWM_FREQUENCY` | 25000 Hz, the 4-wire PWM standard. 21-28 kHz is accepted by most fans |
+| `FAN_MIN_DUTY` / `FAN_MAX_DUTY` | the duty cycle range the 0-100% speed setting is mapped to. **Leave `FAN_MAX_DUTY` at 1.0**, that is what gives you the full rated speed (e.g. 6000 RPM). Lower it only if you deliberately want to cap the fan |
+| `FAN_SPINUP_DURATION` | how long the fan is driven at 100% on boot and every time it is turned back on (2000 ms). Small fans often fail to spin up straight to a low duty cycle, which looks exactly like "the fan never reaches full speed" |
+| `FAN_PWM_INVERTED` | set to `true` if your fan or driver board inverts the signal |
+| `FAN_PWM_OPEN_DRAIN` | drives the PWM pin open drain instead of push-pull. The PWM input of a 4-wire fan is an open collector input pulled up inside the fan, so this makes the fan's own pull up define the high level instead of the ESP32's 3.3V. Only try this if the fan does not reach full speed with 3.3V logic, and check the pull up voltage first - ESP32 pins are **not** 5V tolerant |
+| `FAN_TACHOMETER_ENABLED` | measure the real RPM from the fan's tach wire (see below) |
+| `FAN_RPM_RATED` | the RPM your fan is rated for, used for the readout and the serial log |
+
+Things to check when the fan does not reach its rated speed:
+1. Open the settings menu (or send `fan` over Serial at 115200 baud) and make sure the
+   speed is at 100%. The setting is saved in EEPROM, so an old value sticks around.
+2. Watch the `Fan` line on the heads up display status screen. With the tachometer wired
+   up it shows the measured RPM, so you can see what 100% actually gives you.
+3. If the RPM is still low at 100%: measure the 5V at the fan connector while it runs
+   (long thin wires drop a lot of voltage), then try `FAN_PWM_OPEN_DRAIN` or a
+   level shifter - a 3.3V PWM signal is only marginally above the fan's logic high
+   threshold when its PWM line is pulled up to 5V.
+
+**Tachometer wiring (optional).** The sense wire is an open collector output, usually
+pulled up to 5V inside the fan. Use a voltage divider (for example 4.7k in series and
+10k to GND) or a 3.3V zener before connecting it to GPIO 17, then set
+`FAN_TACHOMETER_ENABLED` to `true`. Send `fan` over Serial to read the RPM, or read it
+from the status screen. Serial output from the remote control commands needs `-DDEBUG`
+enabled in [platformio.ini](platformio.ini).<br><br>
 
 ## Software setup
 - You'll need [Visual Studio code](https://code.visualstudio.com) with the PlafromIO IDE extension installed. 
